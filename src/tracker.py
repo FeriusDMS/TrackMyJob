@@ -7,6 +7,8 @@ from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
 
+import job_alerts
+
 CATEGORIES = {
     "rejection": {
         "fr": [
@@ -125,20 +127,21 @@ def fetch_unprocessed(service):
     return result.get("messages", [])
 
 
-def extract_body(payload):
+def extract_body(payload, mime_type="text/plain"):
     if "parts" in payload:
         text = ""
         for part in payload["parts"]:
-            if part["mimeType"] == "text/plain":
+            if part["mimeType"] == mime_type:
                 data = part.get("body", {}).get("data", "")
                 if data:
                     text += base64.urlsafe_b64decode(data).decode("utf-8", errors="ignore")
             elif "parts" in part:
-                text += extract_body(part)
+                text += extract_body(part, mime_type)
         return text
-    data = payload.get("body", {}).get("data", "")
-    if data:
-        return base64.urlsafe_b64decode(data).decode("utf-8", errors="ignore")
+    if payload.get("mimeType") == mime_type:
+        data = payload.get("body", {}).get("data", "")
+        if data:
+            return base64.urlsafe_b64decode(data).decode("utf-8", errors="ignore")
     return ""
 
 
@@ -150,7 +153,8 @@ def get_email(service, msg_id):
         "subject": headers.get("Subject", "(no subject)"),
         "sender":  headers.get("From", "unknown"),
         "date":    headers.get("Date", ""),
-        "body":    extract_body(msg["payload"])[:3000],
+        "body":    extract_body(msg["payload"], "text/plain")[:3000],
+        "html":    extract_body(msg["payload"], "text/html"),
     }
 
 
@@ -205,13 +209,29 @@ def main():
     print(f"[TrackMyJob] {datetime.now(timezone.utc).isoformat()}")
     service = get_gmail_service()
     label_id = get_or_create_label(service)
+    seen_jobs = job_alerts.load_seen()
 
     messages = fetch_unprocessed(service)
     print(f"  {len(messages)} email(s) non traité(s)")
 
     sent = 0
+    new_jobs = 0
     for msg in messages:
         email = get_email(service, msg["id"])
+
+        if job_alerts.is_job_alert(email["sender"]):
+            source = job_alerts.source_from_sender(email["sender"])
+            listings = job_alerts.extract_listings(email["html"], source)
+            print(f"  [alerte {source}] {len(listings)} offre(s) dans l'email")
+            for job in listings:
+                if job["id"] in seen_jobs:
+                    continue
+                job_alerts.send_job_to_discord(job, os.environ["DISCORD_WEBHOOK_URL"])
+                seen_jobs.add(job["id"])
+                new_jobs += 1
+            mark_processed(service, email["id"], label_id)
+            continue
+
         if not is_job_related(email):
             mark_processed(service, email["id"], label_id)
             continue
@@ -222,7 +242,9 @@ def main():
         mark_processed(service, email["id"], label_id)
         sent += 1
 
-    print(f"  {sent} notification(s) envoyée(s)")
+    job_alerts.save_seen(seen_jobs)
+    print(f"  {sent} notification(s) candidature envoyée(s)")
+    print(f"  {new_jobs} nouvelle(s) offre(s) envoyée(s)")
 
 
 if __name__ == "__main__":

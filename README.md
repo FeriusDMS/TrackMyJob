@@ -1,6 +1,6 @@
 # TrackMyJob
 
-Bot automatique : lit tes emails Gmail, détecte les réponses aux candidatures, envoie une notification Discord.
+Bot automatique : lit tes emails Gmail, détecte les réponses aux candidatures **et** les nouvelles offres correspondant à tes alertes HelloWork/Indeed, envoie une notification Discord pour chaque.
 
 Tourne toutes les 30 min via GitHub Actions — gratuit, zéro serveur.
 
@@ -55,7 +55,23 @@ Dans ton repo GitHub → **Settings** → **Secrets and variables** → **Action
 
 ---
 
-### 5. Activer GitHub Actions
+### 5. Configurer les alertes HelloWork et Indeed
+
+Le bot ne fait aucun scraping : il lit les emails d'alerte que **toi** tu configures directement sur les sites, avec tes filtres.
+
+**HelloWork** ([hellowork.com](https://www.hellowork.com)) :
+1. Lance une recherche : mots-clés `Développeur Full Stack OR Développeur IA`, lieu `Saint-Malo, Rennes, Brest`, télétravail : ouvert au distanciel/présentiel, salaire minimum `36 000 €`
+2. Active « Créer une alerte » sur la recherche, fréquence quotidienne, avec l'email Gmail suivi par le bot
+
+**Indeed** ([indeed.fr](https://www.indeed.fr)) :
+1. Même recherche : `Développeur Full Stack OR Développeur IA`, lieu `Saint-Malo / Rennes / Brest`, salaire minimum `36 000 €`, télétravail inclus
+2. Clique « Recevoir des alertes emploi pour cette recherche », fréquence quotidienne, même email Gmail
+
+⚠️ Le parsing du contenu des emails d'alerte est basé sur la structure HTML habituelle de ces sites. Si les notifications Discord arrivent avec des titres vides ou incohérents, c'est que le template a changé — il suffira d'ajuster `src/job_alerts.py`.
+
+---
+
+### 6. Activer GitHub Actions
 
 Push le repo sur GitHub. Le workflow tourne automatiquement toutes les 30 min.
 
@@ -66,10 +82,10 @@ Pour tester immédiatement : **Actions** → **TrackMyJob** → **Run workflow**
 ## Comment ça fonctionne
 
 1. Récupère les emails de la boîte de réception non encore traités
-2. Filtre ceux liés aux candidatures (mots-clés FR + EN)
-3. Classifie : **Refus** / **Entretien** / **Offre** / **Accusé de réception**
-4. Envoie une notification Discord avec couleur selon la catégorie
-5. Marque l'email avec le label Gmail `TrackMyJob/Processed` pour ne pas le retraiter
+2. Si l'email vient d'une alerte HelloWork/Indeed → extrait chaque offre du digest, ignore celles déjà vues (`data/seen_jobs.json`), notifie Discord pour les nouvelles
+3. Sinon, si l'email est lié à une candidature (mots-clés FR + EN) → classifie : **Refus** / **Entretien** / **Offre** / **Accusé de réception** → notification Discord avec couleur selon la catégorie
+4. Marque l'email avec le label Gmail `TrackMyJob/Processed` pour ne pas le retraiter
+5. Committe `data/seen_jobs.json` s'il a changé, pour ne pas re-notifier les mêmes offres au prochain run
 
 ## Catégories détectées
 
@@ -80,3 +96,4 @@ Pour tester immédiatement : **Actions** → **TrackMyJob** → **Run workflow**
 | 🎉 Offre | Or | félicitations, job offer, we would like to offer |
 | 📬 Accusé | Bleu | bien reçu, received your application, under review |
 | ❓ Inconnu | Gris | email lié au job mais non classifié |
+| 🆕 Nouvelle offre | Violet | alerte HelloWork / Indeed correspondant à tes filtres |
